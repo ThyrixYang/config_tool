@@ -1,10 +1,34 @@
+'''
+MIT License
+
+Copyright (c) 2022 Jia-Qi Yang
+
+https://github.com/ThyrixYang/config_tool
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''
+
 import os
 import re
 import yaml
 import pprint
 import inspect
-
-# https://github.com/pydantic/pydantic/blob/main/pydantic/utils.py
 
 
 def deep_update(mapping, *updating_mappings):
@@ -85,7 +109,7 @@ class Config:
                  usage_state_level="count"):
         self.reset_config(config_dict=config_dict,
                           usage_state_level=usage_state_level)
-                
+
     def reset_config(self, config_dict, usage_state_level):
         assert usage_state_level in ["none", "count", "hist"]
         self._config_dict = {}
@@ -117,20 +141,21 @@ class Config:
     def pprint(self):
         d = config_to_dict(self)
         pprint.pprint(d)
-        
+
     def __getstate__(self):
         state = config_to_dict(self)
         return state
-    
+
     def __setstate__(self, state):
         self.reset_config(state, usage_state_level="none")
-        
+
     def to_file(self, path):
-       with open(path, "w") as f:
+        with open(path, "w") as f:
             yaml.dump(
                 config_to_dict(self),
                 f,
-                default_flow_style=False) 
+                default_flow_style=False)
+
 
 def _load_config(file_path):
     with open(file_path + ".yaml", "r") as f:
@@ -164,30 +189,9 @@ def load_config(file_path, usage_state_level="hist"):
     file_paths = file_path.split("+")
     config = {}
     for i in range(len(file_paths)):
-        # _config = _load_config(os.path.join(
-        #     prefix, "+".join(file_paths[:i + 1])))
         _config = _load_config(os.path.join(prefix, file_paths[i]))
         config = deep_update(config, _config)
     if sub_path is not None:
         _config = _load_config(os.path.join(prefix, sub_path))
         config = deep_filter(config, _config)
     return Config(config, usage_state_level=usage_state_level)
-
-
-def main():
-    config = load_config("configs/test+t-std.yaml")
-    config.pprint()
-    flat_config = flatten_config(config)
-    print(flat_config)
-    print(config.a.a1.a12)
-    print(config.a.a1.a12)
-    print(config.b.b3.b31.b41)
-    pprint.pprint(config_usage_to_dict(config, "count"))
-    pprint.pprint(config_usage_to_dict(config, "hist"))
-    return config
-
-
-if __name__ == "__main__":
-    config = main()
-    print(config.b.b2)
-    pprint.pprint(config_usage_to_dict(config, "count"))
