@@ -29,40 +29,10 @@ import re
 import yaml
 import pprint
 import inspect
-
-
-def deep_update(mapping, *updating_mappings):
-    updated_mapping = mapping.copy()
-    for updating_mapping in updating_mappings:
-        for k, v in updating_mapping.items():
-            if k in updated_mapping and isinstance(updated_mapping[k], dict) and isinstance(v, dict):
-                updated_mapping[k] = deep_update(updated_mapping[k], v)
-            else:
-                updated_mapping[k] = v
-    return updated_mapping
-
-
-def deep_filter(mapping, selector):
-    new_mapping = {}
-    for k, v in selector.items():
-        if k in mapping and isinstance(mapping[k], dict) and isinstance(v, dict):
-            new_mapping[k] = deep_filter(mapping[k], v)
-        else:
-            new_mapping[k] = mapping[k]
-    return new_mapping
-
-
-loader = yaml.SafeLoader
-loader.add_implicit_resolver(
-    u'tag:yaml.org,2002:float',
-    re.compile(u'''^(?:
-     [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
-    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
-    |\\.[0-9_]+(?:[eE][-+][0-9]+)?
-    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
-    |[-+]?\\.(?:inf|Inf|INF)
-    |\\.(?:nan|NaN|NAN))$''', re.X),
-    list(u'-+0123456789.'))
+import fsspec
+from copy import deepcopy
+from collections.abc import Mapping
+from .utils import deep_update, load_yaml, deep_filter
 
 
 def config_to_dict(x):
@@ -73,7 +43,6 @@ def config_to_dict(x):
         return res
     else:
         return x
-
 
 def config_usage_to_dict(x, key):
     if isinstance(x, Config):
@@ -99,18 +68,33 @@ def flatten_config(c, prefix=""):
             res.update(flatten_config(v, name))
         else:
             res[name] = v
-    return res
+    return Config(res)
+
+def recover_flattened_config(config):
+    config_dict = config_to_dict(config)
+    recovered_dict = {}
+    for k, v in config_dict.items():
+        ks = k.split(".")
+        _vv = v
+        for _k in reversed(ks):
+            res_dict = {_k: _vv}
+            _vv = res_dict
+        recovered_dict = deep_update(recovered_dict, res_dict)
+    return Config(recovered_dict)
 
 
-class Config:
+class Config(Mapping):
 
     def __init__(self,
                  config_dict={},
                  usage_state_level="count"):
         self.reset_config(config_dict=config_dict,
                           usage_state_level=usage_state_level)
+        
+    def copy(self):
+        return Config(deepcopy(config_to_dict(self)))
 
-    def reset_config(self, config_dict, usage_state_level):
+    def reset_config(self, config_dict, usage_state_level="count"):
         assert usage_state_level in ["none", "count", "hist"]
         self._config_dict = {}
         self._usage_state = {}
@@ -124,6 +108,19 @@ class Config:
                 self._usage_state[k] = {"count": 0, "hist": []}
 
     def __getattr__(self, key):
+        if key in ["_config_dict", "_usage_state_level", "_usage_state"]:
+            return super().__getattr__(key)
+        return self.__getitem__(key)
+    
+    def __setattr__(self, key, value):
+        if key in ["_config_dict", "_usage_state_level", "_usage_state"]:
+            super().__setattr__(key, value)
+            return
+        self.__setitem__(key, value)
+
+    def __getitem__(self, key):
+        if key not in self._config_dict:
+            raise ValueError("Key '{}' not in config: {}".format(key, self))
         if not isinstance(self._config_dict[key], Config):
             if self._usage_state_level == "none":
                 pass
@@ -137,6 +134,24 @@ class Config:
             else:
                 raise ValueError()
         return self._config_dict[key]
+    
+    def __setitem__(self, key, value):
+        self._config_dict[key] = value
+        if self._usage_state_level == "none":
+            pass
+        elif self._usage_state_level == "count":
+            self._usage_state[key] = {"count": 1}
+        elif self._usage_state_level == "hist":
+            self._usage_state[key] = {"count": 0, "hist": []}
+        else:
+            raise ValueError()
+
+    def __iter__(self):
+        for k in self._config_dict.keys():
+            yield k
+
+    def __len__(self):
+        return len(self._config_dict)
 
     def pprint(self):
         d = config_to_dict(self)
@@ -150,17 +165,35 @@ class Config:
         self.reset_config(state, usage_state_level="none")
 
     def to_file(self, path):
-        with open(path, "w") as f:
+        # dir_path = os.path.dirname(path)
+        # os.makedirs(dir_path, exist_ok=True)
+        with fsspec.open(path, "w", auto_mkdir=True) as f:
             yaml.dump(
                 config_to_dict(self),
                 f,
                 default_flow_style=False)
+            
+    def __eq__(self, other):
+        for k in self._config_dict.keys():
+            if k not in list(other._config_dict.keys()):
+                return False
+        for k in other._config_dict.keys():
+            if k not in list(self._config_dict.keys()):
+                return False
+        for k in self._config_dict.keys():
+            if not self._config_dict[k] == other._config_dict[k]:
+                return False
+        return True
+
+    def __str__(self):
+        return str(config_to_dict(self))
+
+    def __repr__(self):
+        return self.__str__()
 
 
 def _load_config(file_path):
-    with open(file_path + ".yaml", "r") as f:
-        return yaml.load(f, Loader=loader)
-
+    return load_yaml(file_path + ".yaml")
 
 def check_config_path(file_path):
     num_sub = file_path.count("-")
